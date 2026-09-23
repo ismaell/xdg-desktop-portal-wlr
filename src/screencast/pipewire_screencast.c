@@ -689,6 +689,48 @@ static const struct pw_stream_events pwr_stream_events = {
 	.process = pwr_handle_stream_on_process,
 };
 
+// Show a desktop notification (best effort, fire and forget), since the
+// failure otherwise shows up only as a client that captures nothing.
+static void pwr_notify(struct xdpw_screencast_context *ctx, const char *body) {
+	sd_bus_message *msg = NULL;
+	int ret = sd_bus_message_new_method_call(ctx->state->bus, &msg,
+		"org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+		"org.freedesktop.Notifications", "Notify");
+	if (ret < 0) {
+		goto err;
+	}
+	ret = sd_bus_message_append(msg, "susss", "xdg-desktop-portal-wlr", 0u,
+		"dialog-warning", "Screen sharing will not work", body);
+	if (ret < 0) {
+		goto err;
+	}
+	ret = sd_bus_message_append(msg, "asa{sv}i", 0, 0, 15000);
+	if (ret < 0) {
+		goto err;
+	}
+	ret = sd_bus_send(ctx->state->bus, msg, NULL);
+	if (ret < 0) {
+		goto err;
+	}
+	sd_bus_message_unref(msg);
+	return;
+
+err:
+	logprint(DEBUG, "pipewire: failed to send notification: %s", strerror(-ret));
+	sd_bus_message_unref(msg);
+}
+
+static void pwr_notify_no_session_manager(struct xdpw_screencast_context *ctx) {
+	if (ctx->pwr_session_manager_notified) {
+		return;
+	}
+	ctx->pwr_session_manager_notified = true;
+	pwr_notify(ctx,
+		"PipeWire has no session manager running (is WirePlumber started?). "
+		"Screencast streams will stay paused and the sharing application "
+		"will show nothing.");
+}
+
 void xdpw_pwr_stream_create(struct xdpw_screencast_instance *cast) {
 	struct xdpw_screencast_context *ctx = cast->ctx;
 	struct xdpw_state *state = ctx->state;
@@ -699,6 +741,7 @@ void xdpw_pwr_stream_create(struct xdpw_screencast_instance *cast) {
 		logprint(WARN, "pipewire: no session manager detected (no 'default' "
 			"metadata found); the stream will most likely stay paused and "
 			"clients will fail to capture. Is WirePlumber running?");
+		pwr_notify_no_session_manager(ctx);
 	}
 
 	uint8_t buffer[2 * 1024];
@@ -779,6 +822,7 @@ static void pwr_registry_global(void *data, uint32_t id, uint32_t permissions,
 	}
 	ctx->pwr_metadata_id = id;
 	ctx->pwr_session_manager = true;
+	ctx->pwr_session_manager_notified = false;
 	logprint(INFO, "pipewire: session manager detected ('default' metadata, id %u)", id);
 }
 
