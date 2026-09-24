@@ -857,6 +857,7 @@ int xdpw_pwr_context_create(struct xdpw_state *state) {
 		ctx->core = pw_context_connect(ctx->pwr_context, NULL, 0);
 		if (!ctx->core) {
 			logprint(ERROR, "pipewire: couldn't connect to context");
+			pwr_notify(ctx, "PipeWire is not running.");
 			return -1;
 		}
 
